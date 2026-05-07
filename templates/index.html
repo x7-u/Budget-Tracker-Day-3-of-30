@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Day 03. Budget Tracker</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="masthead">
+        <span class="mast-day">D03</span>
+        <div class="mast-text">
+          <h1 class="mast-title">Variance Terminal</h1>
+          <span class="mast-sub">budget . actual . forecast . anomaly</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="locator">127.0.0.1<span class="locator-port">:1003</span></span>
+        <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">&#9728;</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-text">
+        <span class="hero-eyebrow">// LOCAL .. LOOPBACK .. AI-NARRATED</span>
+        <h2 class="hero-title">Drop a budget. Get a controller commentary.</h2>
+        <p class="hero-blurb">
+          Direction-aware variance with RAG bands, drill-through by cost centre, category and period,
+          a parent rollup when you provide one, anomaly z-scores against history, and an AI-drafted
+          narrative in the voice of a senior financial controller. Outputs Excel, CSV, PowerPoint
+          and a Power BI Power Query script.
+        </p>
+      </div>
+      <dl class="hero-stats" id="hero-stats">
+        <div class="hstat"><dt>Rows</dt><dd id="stat-rows">0</dd></div>
+        <div class="hstat"><dt>Budget GBP</dt><dd id="stat-budget">0</dd></div>
+        <div class="hstat"><dt>Var %</dt><dd id="stat-var-pct">0</dd></div>
+        <div class="hstat"><dt>AI cost</dt><dd id="stat-cost">$0.0000</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="ribbon" aria-label="Run controls">
+    <div class="ribbon-grid">
+      <div class="dock-card">
+        <header class="dock-card-head">
+          <span class="dock-num">01</span>
+          <h3>API key</h3>
+        </header>
+        <div class="dock-card-body">
+          {% if env_key_ok %}
+            <div class="spec-status ok"><span>&#9679;</span> Loaded from <code>.env</code></div>
+          {% else %}
+            <div class="spec-status warn"><span>&#9679;</span> Missing. Paste below or set <code>.env</code></div>
+          {% endif %}
+          <input id="api-key" type="password" placeholder="sk-ant-api03-... (memory only)"
+                 autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="dock-card">
+        <header class="dock-card-head">
+          <span class="dock-num">02</span>
+          <h3>Source</h3>
+        </header>
+        <div class="dock-card-body">
+          <div class="seg" role="tablist">
+            <label class="seg-option">
+              <input type="radio" name="src" value="upload" checked>
+              <span>Upload</span>
+            </label>
+            <label class="seg-option">
+              <input type="radio" name="src" value="bundled">
+              <span>Bundled</span>
+            </label>
+            <label class="seg-option">
+              <input type="radio" name="src" value="compare">
+              <span>Compare</span>
+            </label>
+          </div>
+          <span class="dock-hint">Up to {{ max_upload_mb }} MB . XLSX or CSV . wide or long</span>
+        </div>
+      </div>
+
+      <div class="dock-card">
+        <header class="dock-card-head">
+          <span class="dock-num">03</span>
+          <h3>Model</h3>
+        </header>
+        <div class="dock-card-body">
+          <select id="model">
+            <option value="">Default . Haiku 4.5</option>
+            <option value="claude-haiku-4-5-20251001">Haiku 4.5 (~$0.005)</option>
+            <option value="claude-sonnet-4-6">Sonnet 4.6 (~$0.015)</option>
+            <option value="claude-opus-4-7">Opus 4.7 (~$0.05)</option>
+          </select>
+          <label class="check-inline">
+            <input type="checkbox" id="skip-ai">
+            <span>Skip AI</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="dock-card dock-action">
+        <header class="dock-card-head">
+          <span class="dock-num">04</span>
+          <h3>Run</h3>
+        </header>
+        <div class="dock-card-body">
+          <button id="analyse-btn" class="btn-run" type="button">
+            <span class="btn-run-line">EXEC ANALYSE</span>
+            <span class="btn-run-sub">Ctrl + Enter</span>
+          </button>
+          <button id="reset" class="btn-link" type="button" hidden>&laquo; Reset session</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="spend-strip" aria-label="Spend and history">
+    <div class="spend-grid">
+      <div class="spend-cell">
+        <span class="spend-label">30D SPEND</span>
+        <strong id="cost-30d">$0.0000</strong>
+      </div>
+      <div class="spend-cell">
+        <span class="spend-label">ALL TIME</span>
+        <strong id="cost-total">$0.0000</strong>
+      </div>
+      <div class="spend-cell">
+        <span class="spend-label">RUNS</span>
+        <strong id="cost-runs">0</strong>
+      </div>
+      <div class="spend-cell spend-actions">
+        <button id="history-open" class="btn-line" type="button">History &rarr;</button>
+        <button id="cost-clear" class="btn-link" type="button">Clear log</button>
+      </div>
+    </div>
+  </section>
+
+  <main class="canvas">
+
+    <!-- Upload zone (visible when src=upload) -->
+    <div id="upload-zone" class="dropzone canvas-dropzone" tabindex="0" role="button"
+         aria-label="Drop an .xlsx or .csv file here or click to choose">
+      <div class="dropzone-inner">
+        <span class="dropzone-mark">&#8615;</span>
+        <h2>Drop a budget workbook</h2>
+        <p>.xlsx or .csv . up to {{ max_upload_mb }} MB . click to browse, or drag from anywhere on the page</p>
+        <span class="dropzone-meta">XLSX: metadata + data sheets (long), or metadata + budget + actual sheets (wide). CSV: long-format columns; metadata defaults applied.</span>
+      </div>
+      <input type="file" id="file-input" accept=".xlsx,.csv" hidden>
+      <ul id="file-list" class="file-list"></ul>
+    </div>
+
+    <!-- Compare zone (visible when src=compare) -->
+    <div id="compare-zone" class="dropzone bundled canvas-dropzone" hidden>
+      <div class="dropzone-inner">
+        <span class="dropzone-mark">&#8646;</span>
+        <h2>Compare two workbooks</h2>
+        <p>Pick two .xlsx workbooks. Differences surface row-by-row, ordered by biggest movers. AI commentary is skipped to keep cost at zero.</p>
+      </div>
+      <div class="compare-pickers">
+        <label class="compare-slot">
+          <span class="compare-label">A</span>
+          <input id="compare-file-a" type="file" accept=".xlsx">
+          <span class="compare-name" id="compare-name-a">No file picked</span>
+        </label>
+        <label class="compare-slot">
+          <span class="compare-label">B</span>
+          <input id="compare-file-b" type="file" accept=".xlsx">
+          <span class="compare-name" id="compare-name-b">No file picked</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Bundled sample picker (visible when src=bundled) -->
+    <div id="bundled-zone" class="dropzone bundled canvas-dropzone" hidden>
+      <div class="dropzone-inner">
+        <span class="dropzone-mark">&#9679;&#9679;&#9679;</span>
+        <h2>Bundled samples</h2>
+        <p>Pick one to analyse. Each one tells a different variance story.</p>
+      </div>
+      <ul id="sample-list" class="sample-list">
+        {% for s in samples %}
+        <li>
+          <label class="sample-row">
+            <input type="radio" class="sample-pick" name="sample-pick"
+                   value="{{ s.id }}" {% if loop.first %}checked{% endif %}>
+            <span class="sample-name">{{ s.filename }}</span>
+            <span class="sample-desc">{{ s.label }}</span>
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <section id="empty-state" class="state state-empty">
+      <div class="state-mark">&#8593;</div>
+      <p>Pick a source above, then hit <strong>EXEC ANALYSE</strong>.
+      Or press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> from anywhere.</p>
+    </section>
+
+    <section id="loading-state" class="state state-loading" hidden role="status" aria-live="polite">
+      <div class="loader-ring" aria-hidden="true"></div>
+      <p id="loading-message">Running variance analysis...</p>
+    </section>
+
+    <section id="error-state" class="state state-error" hidden role="alert" aria-live="assertive" tabindex="-1">
+      <strong>Analysis failed</strong>
+      <p id="error-message"></p>
+    </section>
+
+    <section id="results" hidden>
+      <div id="results-summary" class="results-summary"></div>
+
+      <article class="compare-card" id="compare-card" hidden>
+        <header class="compare-head">
+          <h3>Comparison summary</h3>
+          <div class="compare-actions">
+            <a id="compare-csv-link"  class="btn-export btn-tight" href="#" download hidden>&#8595; CSV</a>
+            <a id="compare-xlsx-link" class="btn-export btn-export-alt btn-tight" href="#" download hidden>&#8595; Excel</a>
+          </div>
+        </header>
+        <div id="compare-summary" class="compare-summary"></div>
+        <div id="compare-body" class="compare-body"></div>
+      </article>
+
+      <div id="commentary-card" class="commentary-card" hidden>
+        <div class="commentary-head">
+          <span class="commentary-eyebrow">// MGMT COMMENTARY</span>
+          <span id="commentary-cost" class="commentary-cost"></span>
+        </div>
+        <h3 id="commentary-headline" class="commentary-headline"></h3>
+        <p  id="commentary-summary"  class="commentary-summary"></p>
+        <div class="commentary-cols">
+          <div>
+            <h4 class="commentary-h4 c-adverse">Adverse drivers</h4>
+            <ul id="commentary-adverse"></ul>
+          </div>
+          <div>
+            <h4 class="commentary-h4 c-favourable">Favourable drivers</h4>
+            <ul id="commentary-favourable"></ul>
+          </div>
+        </div>
+        <h4 class="commentary-h4 c-actions">Suggested actions</h4>
+        <ul id="commentary-actions" class="actions-list"></ul>
+      </div>
+
+      <article class="pivot pivot-parent" id="pivot-parent-card" hidden>
+        <header class="pivot-head">
+          <h3>Parent rollups</h3>
+          <span class="pivot-hint">Cost centres grouped by their <code>parent</code> column. Click to filter.</span>
+        </header>
+        <div class="pivot-body" id="pivot-parent"></div>
+      </article>
+
+      <div class="pivot-row" id="pivot-row" hidden>
+        <article class="pivot" data-dim="cost_centre">
+          <header class="pivot-head">
+            <h3>By cost centre</h3>
+            <span class="pivot-hint">Click a row to filter the table below.</span>
+          </header>
+          <div class="pivot-body" id="pivot-cost-centre"></div>
+        </article>
+        <article class="pivot" data-dim="category">
+          <header class="pivot-head">
+            <h3>By category</h3>
+            <span class="pivot-hint">Click a row to filter the table below.</span>
+          </header>
+          <div class="pivot-body" id="pivot-category"></div>
+        </article>
+        <article class="pivot" id="pivot-period-card" data-dim="period" hidden>
+          <header class="pivot-head">
+            <h3>By period</h3>
+            <span class="pivot-hint">Click a row to filter the table below.</span>
+          </header>
+          <div class="pivot-body" id="pivot-period"></div>
+        </article>
+      </div>
+
+      <article class="heatmap-card" id="heatmap-card" hidden>
+        <header class="heatmap-head">
+          <h3>Heat-map</h3>
+          <span class="heatmap-hint">Cost centre &times; category. Click a cell to filter the Detail table.</span>
+        </header>
+        <div class="heatmap-body" id="heatmap-body"></div>
+        <footer class="heatmap-legend">
+          <span class="legend-pill rag-red">Red</span>
+          <span class="legend-pill rag-amber">Amber</span>
+          <span class="legend-pill rag-green">Green</span>
+          <span class="legend-pill rag-favourable">Favourable</span>
+          <span class="legend-pill rag-na">n/a</span>
+          <span class="legend-pill legend-empty">No data</span>
+        </footer>
+      </article>
+
+      <article class="detail-card" id="detail-card" hidden>
+        <header class="detail-head">
+          <h3>Detail</h3>
+          <div class="detail-tools">
+            <input id="detail-search" type="search" placeholder="Filter rows..." aria-label="Filter detail rows">
+            <span id="filter-chip" class="filter-chip" hidden></span>
+            <button id="detail-clear" class="btn-ghost btn-tight" type="button" hidden>Clear filters</button>
+          </div>
+        </header>
+        <div class="detail-pills" id="detail-pills" role="toolbar" aria-label="Filter Detail by RAG, line type, and direction"></div>
+        <div class="rag-legend" id="rag-legend"></div>
+        <div class="detail-body" id="detail-body"></div>
+      </article>
+
+      <div id="warnings-card" class="warnings-card" hidden>
+        <strong>Validation notes</strong>
+        <ul id="warnings-list"></ul>
+      </div>
+
+      <div id="export-strip" class="export-strip" hidden>
+        <div class="export-head">
+          <h3>Export</h3>
+          <p>Excel pack . CSV . PowerPoint deck . Power BI Power Query script</p>
+        </div>
+        <div class="export-actions">
+          <a id="csv-link"  class="btn-export" href="#" download>&#8595; CSV</a>
+          <a id="xlsx-link" class="btn-export btn-export-alt" href="#" download>&#8595; Excel</a>
+          <a id="pptx-link" class="btn-export btn-export-alt" href="#" download hidden>&#8595; PowerPoint</a>
+          <a id="pbi-link"  class="btn-export btn-export-alt" href="/power_bi/power_query.m" download
+             title="Power Query M script. Paste into Power BI Desktop's Advanced editor.">&#8595; Power BI (M)</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <span>30-Day Finance and Accounting Project . Day 03</span>
+    <span class="dot">&middot;</span>
+    <span>runs on your machine only . loopback bound</span>
+  </footer>
+
+  <div id="page-drop-overlay" class="page-drop-overlay" hidden aria-hidden="true">
+    <div class="page-drop-card">
+      <div class="page-drop-mark">&#8595;</div>
+      <h2>Drop to analyse</h2>
+      <p>Release anywhere on the page. We will route the file to the canvas.</p>
+    </div>
+  </div>
+
+  <div id="history-modal" class="modal" hidden aria-hidden="true" role="dialog" aria-labelledby="history-modal-title">
+    <div class="modal-backdrop" data-close="1"></div>
+    <div class="modal-card">
+      <header class="modal-head">
+        <h2 id="history-modal-title">Run history</h2>
+        <div class="modal-actions">
+          <span id="history-summary-line" class="muted"></span>
+          <button id="history-refresh" class="btn-ghost btn-tight" type="button">&#8635; Refresh</button>
+          <button class="btn-ghost btn-tight" type="button" data-close="1">&times; Close</button>
+        </div>
+      </header>
+      <div id="history-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="shortcuts-modal" class="modal" hidden aria-hidden="true" role="dialog" aria-labelledby="shortcuts-modal-title">
+    <div class="modal-backdrop" data-close="1"></div>
+    <div class="modal-card modal-card-narrow">
+      <header class="modal-head">
+        <h2 id="shortcuts-modal-title">Keyboard shortcuts</h2>
+        <button class="btn-ghost btn-tight" type="button" data-close="1">&times; Close</button>
+      </header>
+      <div class="modal-body">
+        <dl class="kbd-list">
+          <div><dt><kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd>Run analyse</dd></div>
+          <div><dt><kbd>?</kbd></dt><dd>Open this shortcuts panel</dd></div>
+          <div><dt><kbd>H</kbd></dt><dd>Open run history</dd></div>
+          <div><dt><kbd>/</kbd></dt><dd>Focus the Detail filter box</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Close any open modal</dd></div>
+        </dl>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
